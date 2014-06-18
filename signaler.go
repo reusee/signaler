@@ -1,5 +1,10 @@
 package signaler
 
+import (
+	"fmt"
+	"sync"
+)
+
 type Signaler struct {
 	cbs   map[string][]interface{}
 	calls chan func()
@@ -33,17 +38,40 @@ func (s *Signaler) OnSignal(signal string, f interface{}) {
 
 func (s *Signaler) Signal(signal string, args ...interface{}) {
 	s.calls <- func() {
-		for _, f := range s.cbs[signal] {
+		i := 0
+		cbs := s.cbs[signal]
+		for i < len(cbs) {
+			f := cbs[i]
 			switch fun := f.(type) {
 			case func():
 				fun()
+				i++
 			case func(interface{}):
 				fun(args[0])
+				i++
 			case func(...interface{}):
 				fun(args...)
+				i++
+			case func() bool:
+				if fun() { // one shot
+					cbs = append(cbs[:i], cbs[i+1:]...)
+				} else {
+					i++
+				}
 			default:
-				panic("invalid signal hadler")
+				panic(fmt.Sprintf("invalid signal hadler %T", f))
 			}
 		}
+		s.cbs[signal] = cbs
 	}
+}
+
+func (s *Signaler) SignalSynced(signal string, args ...interface{}) {
+	var lock sync.Mutex
+	lock.Lock()
+	s.Signal(signal, args...)
+	s.calls <- func() {
+		lock.Unlock()
+	}
+	lock.Lock()
 }
